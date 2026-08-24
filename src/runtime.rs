@@ -71,8 +71,13 @@ impl RuntimeSession {
             .viewport(0, 0, logical_width, logical_height);
         let method = if self.vm.has_instance_method(self.listener, "onDraw") {
             "onDraw"
-        } else {
+        } else if self.vm.has_instance_method(self.listener, "render") {
             "render"
+        } else {
+            return Err(anyhow::anyhow!(
+                "selected view has no render method: {:?}",
+                self.vm.instance_class_names()
+            ));
         };
         self.vm
             .render_frame(self.listener, method)
@@ -277,7 +282,7 @@ impl Runtime {
                 VmConfig {
                     max_steps: self.config.max_steps,
                     max_call_depth: 256,
-                    trace_registers: false,
+                    trace_registers: true,
                 },
             );
             let method_index = plan

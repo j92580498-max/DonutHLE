@@ -423,9 +423,9 @@ impl<'a> Vm<'a> {
             let HeapObject::Instance { class_name, .. } = object else {
                 return None;
             };
-            self.dex
-                .method_code(class_name, "onDraw")
-                .map(|_| id as ObjectId)
+            (class_name.ends_with("/GameView;")
+                && self.dex.method_code(class_name, "onDraw").is_some())
+            .then_some(id as ObjectId)
         })
     }
 
@@ -2880,7 +2880,8 @@ impl<'a> Vm<'a> {
             };
         }
         if method_name == "<init>"
-            && (class_name.starts_with("Lcom/badlogic/gdx/")
+            && (class_name == "Landroid/content/Intent;"
+                || class_name.starts_with("Lcom/badlogic/gdx/")
                 || class_name.starts_with("Landroid/")
                 || class_name.starts_with("Ljava/lang/ref/")
                 || class_name.starts_with("Ljava/lang/")
