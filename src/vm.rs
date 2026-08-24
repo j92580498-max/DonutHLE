@@ -2330,11 +2330,8 @@ impl<'a> Vm<'a> {
                 "startActivity" => {
                     let intent = object_arg(args, 1)?;
                     if let Some(Value::String(component)) = self
-                        .object_field_object(intent, "component")
-                        .and_then(|id| match self.heap_object(id) {
-                            Some(HeapObject::String(value)) => Some(Value::String(value.clone())),
-                            _ => None,
-                        })
+                        .object_field_string(intent, "component")
+                        .map(Value::String)
                     {
                         self.pending_activity = Some((component, intent));
                     }
@@ -2392,11 +2389,8 @@ impl<'a> Vm<'a> {
                 "startActivity" => {
                     let intent = object_arg(args, 1)?;
                     if let Some(Value::String(component)) = self
-                        .object_field_object(intent, "component")
-                        .and_then(|id| match self.heap_object(id) {
-                            Some(HeapObject::String(value)) => Some(Value::String(value.clone())),
-                            _ => None,
-                        })
+                        .object_field_string(intent, "component")
+                        .map(Value::String)
                     {
                         self.pending_activity = Some((component, intent));
                     }

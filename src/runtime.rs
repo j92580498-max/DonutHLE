@@ -308,7 +308,12 @@ impl Runtime {
                     break;
                 }
                 transition_count += 1;
-                let target_class = format!("L{};", target_activity.replace('.', "/"));
+                let target_class =
+                    if target_activity.starts_with('L') && target_activity.ends_with(';') {
+                        target_activity.clone()
+                    } else {
+                        format!("L{};", target_activity.replace('.', "/"))
+                    };
                 let target_object = vm.alloc_instance(target_class.clone());
                 vm.set_activity_intent(target_object, intent);
                 vm.run_instance_method(target_object, "<init>", Vec::new())
@@ -331,27 +336,19 @@ impl Runtime {
                 .framework
                 .gdx_listener
                 .or_else(|| vm.find_instance_by_class("Lcom/hyperkani/sliceice/Engine;"))
-                .or_else(|| vm.find_instance_by_class("Lorg/nwhy/SokobanLite/GameView;"));
-            let listener = if let Some(listener) = listener {
+                .or_else(|| vm.find_instance_by_class("Lorg/nwhy/SokobanLite/GameView;"))
+                .or_else(|| vm.find_render_view_or_content_view())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "application launched but created no renderable View; instances: {:?}; trace: {:?}",
+                        vm.instance_class_names(),
+                        vm.drain_trace()
+                    )
+                })?;
+            if vm.has_instance_method(listener, "create") {
                 vm.run_instance_method(listener, "create", Vec::new())
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                listener
-            } else {
-                vm.find_render_view_or_content_view()
-                    .or_else(|| {
-                        vm.instance_class_names()
-                            .into_iter()
-                            .find(|class_name| class_name.ends_with("/GameView;"))
-                            .and_then(|class_name| vm.find_instance_by_class(&class_name))
-                    })
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "application launched but created no renderable View; instances: {:?}; trace: {:?}",
-                            vm.instance_class_names(),
-                            vm.drain_trace()
-                        )
-                    })?
-            };
+            }
             let mut session = RuntimeSession { vm, listener };
             let (commands, pixels) = session.render_current_frame()?;
             let frame_status = format!(
