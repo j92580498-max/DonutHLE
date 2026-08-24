@@ -465,6 +465,21 @@ impl<'a> Vm<'a> {
                         .contains_key(&(object_id as ObjectId)))
                 .then_some(object_id as ObjectId)
             })
+            .or_else(|| {
+                self.heap
+                    .iter()
+                    .enumerate()
+                    .find_map(|(object_id, object)| {
+                        let HeapObject::Instance { class_name, .. } = object else {
+                            return None;
+                        };
+                        (class_name == "Landroid/widget/Button;"
+                            && self
+                                .view_click_listeners
+                                .contains_key(&(object_id as ObjectId)))
+                        .then_some(object_id as ObjectId)
+                    })
+            })
     }
 
     pub fn click_view(&mut self, view: ObjectId) -> Result<Value, VmError> {
@@ -2872,6 +2887,14 @@ impl<'a> Vm<'a> {
                 )),
                 "toDegrees" => Ok(Value::Double(
                     as_double(args.first().cloned().unwrap_or(Value::Int(0)), 0, 0)?.to_degrees(),
+                )),
+                "random" => Ok(Value::Double(
+                    (NANO_TIME_START
+                        .get_or_init(std::time::Instant::now)
+                        .elapsed()
+                        .as_nanos() as u64
+                        % 1_000_000) as f64
+                        / 1_000_000.0,
                 )),
                 "min" | "max" => {
                     let left = args.first().cloned().unwrap_or(Value::Int(0));

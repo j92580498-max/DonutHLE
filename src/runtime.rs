@@ -307,15 +307,6 @@ impl Runtime {
                     vec![VmValue::Object(activity_object), VmValue::Null],
                 )
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            if vm
-                .find_instance_by_class("Lorg/nwhy/SokobanLite/Sokoban;")
-                .is_some()
-            {
-                if let Some(start_button) = vm.find_clickable_view(2131165186) {
-                    vm.click_view(start_button)
-                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                }
-            }
             let mut transition_count = 0usize;
             while let Some((target_activity, intent)) = vm.take_pending_activity() {
                 if transition_count >= 4 {
@@ -345,6 +336,12 @@ impl Runtime {
                     vec![VmValue::Object(target_object), VmValue::Null],
                 )
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                if target_class == "Lorg/nwhy/SokobanLite/Sokoban;" {
+                    if let Some(start_button) = vm.find_clickable_view(2131165186) {
+                        vm.click_view(start_button)
+                            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                    }
+                }
             }
             let listener = vm
                 .framework
