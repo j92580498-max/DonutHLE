@@ -2265,7 +2265,11 @@ impl<'a> Vm<'a> {
             let receiver = object_arg(args, 0)?;
             return match method_name {
                 "<init>" => {
-                    if let Some(class_name) = self.class_name_from_value(args.get(2)) {
+                    if let Some(class_name) = args
+                        .iter()
+                        .rev()
+                        .find_map(|value| self.class_name_from_value(Some(value)))
+                    {
                         self.set_object_field(receiver, "component", Value::String(class_name));
                     }
                     Ok(Value::Void)
