@@ -87,6 +87,10 @@ impl RuntimeSession {
     pub fn drain_register_trace(&mut self) -> Vec<String> {
         self.vm.drain_trace()
     }
+
+    pub fn take_pending_activity(&mut self) -> Option<(String, ObjectId)> {
+        self.vm.take_pending_activity()
+    }
 }
 
 impl Default for Runtime {
@@ -292,6 +296,36 @@ impl Runtime {
                     vec![VmValue::Object(activity_object), VmValue::Null],
                 )
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let mut active_activity = plan.class_name.clone();
+            let mut active_activity_object = activity_object;
+            let mut transition_count = 0usize;
+            while let Some((target_activity, intent)) = vm.take_pending_activity() {
+                if transition_count >= 4 {
+                    break;
+                }
+                transition_count += 1;
+                let target_class = format!("L{};", target_activity.replace('.', "/"));
+                let target_object = vm.alloc_instance(target_class.clone());
+                vm.set_activity_intent(target_object, intent);
+                vm.run_instance_method(target_object, "<init>", Vec::new())
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let target_on_create = plan
+                    .dex
+                    .methods
+                    .iter()
+                    .position(|method| {
+                        method.class_name == target_class && method.name == "onCreate"
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("activity {target_activity} has no onCreate"))?;
+                vm.run_method(
+                    target_on_create,
+                    vec![VmValue::Object(target_object), VmValue::Null],
+                )
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                active_activity = target_class;
+                active_activity_object = target_object;
+            }
+            let _ = (active_activity, active_activity_object);
             let listener = vm
                 .framework
                 .gdx_listener

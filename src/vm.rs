@@ -110,6 +110,8 @@ pub struct Vm<'a> {
     canvas_stack: Vec<CanvasState>,
     canvas_state: CanvasState,
     view_touch_listeners: HashMap<ObjectId, ObjectId>,
+    view_click_listeners: HashMap<ObjectId, ObjectId>,
+    pending_activity: Option<(String, ObjectId)>,
 }
 
 impl<'a> Vm<'a> {
@@ -130,6 +132,8 @@ impl<'a> Vm<'a> {
             canvas_stack: Vec::new(),
             canvas_state: CanvasState::default(),
             view_touch_listeners: HashMap::new(),
+            view_click_listeners: HashMap::new(),
+            pending_activity: None,
         }
     }
 
@@ -142,6 +146,18 @@ impl<'a> Vm<'a> {
 
     pub fn enable_register_trace(&mut self, enabled: bool) {
         self.config.trace_registers = enabled;
+    }
+
+    pub fn take_pending_activity(&mut self) -> Option<(String, ObjectId)> {
+        self.pending_activity.take()
+    }
+
+    pub fn set_activity_intent(&mut self, activity: ObjectId, intent: ObjectId) {
+        self.set_object_field(activity, "intent", Value::Object(intent));
+    }
+
+    pub fn set_view_id(&mut self, view: ObjectId, id: i32) {
+        self.set_object_field(view, "view_id", Value::Int(id));
     }
 
     pub fn alloc_instance(&mut self, class_name: impl Into<String>) -> ObjectId {
@@ -338,6 +354,11 @@ impl<'a> Vm<'a> {
         x: f32,
         y: f32,
     ) -> Result<Value, VmError> {
+        if action == 1 {
+            if let Some(listener) = self.view_click_listeners.get(&view).copied() {
+                return self.run_instance_method(listener, "onClick", vec![Value::Object(view)]);
+            }
+        }
         let listener = self
             .view_touch_listeners
             .get(&view)
@@ -376,6 +397,15 @@ impl<'a> Vm<'a> {
                 .method_code(class_name, "onDraw")
                 .map(|_| id as ObjectId)
         })
+    }
+
+    pub fn click_view(&mut self, view: ObjectId) -> Result<Value, VmError> {
+        let listener = self
+            .view_click_listeners
+            .get(&view)
+            .copied()
+            .ok_or_else(|| self.error(0, 0, "view has no click listener"))?;
+        self.run_instance_method(listener, "onClick", vec![Value::Object(view)])
     }
 
     fn instance_method_index(&self, object: ObjectId, referenced_index: usize) -> Option<usize> {
@@ -2117,6 +2147,17 @@ impl<'a> Vm<'a> {
         method_name: &str,
         args: &[Value],
     ) -> Result<Value, VmError> {
+        if class_name == "Landroid/content/Intent;" {
+            let receiver = object_arg(args, 0)?;
+            if method_name == "<init>" {
+                if args.len() > 1 {
+                    if let Some(class_name) = self.class_name_from_value(args.last()) {
+                        self.set_object_field(receiver, "component", Value::String(class_name));
+                    }
+                }
+                return Ok(Value::Void);
+            }
+        }
         if class_name == "Landroid/util/Log;" {
             let message = args
                 .iter()
@@ -2222,6 +2263,24 @@ impl<'a> Vm<'a> {
                 "getFlags" => Ok(Value::Int(
                     self.object_field_int(receiver, "flags").unwrap_or(0),
                 )),
+                "getExtras" => Ok(Value::Object(
+                    self.object_field_object(receiver, "extras")
+                        .unwrap_or_else(|| self.alloc_instance("Landroid/os/Bundle;")),
+                )),
+                "startActivity" => {
+                    let intent = object_arg(args, 1)?;
+                    if let Some(Value::String(component)) = self
+                        .object_field_object(intent, "component")
+                        .and_then(|id| match self.heap_object(id) {
+                            Some(HeapObject::String(value)) => Some(Value::String(value.clone())),
+                            _ => None,
+                        })
+                    {
+                        self.pending_activity = Some((component, intent));
+                    }
+                    return Ok(Value::Void);
+                }
+                "finish" => return Ok(Value::Void),
                 _ => Ok(Value::Void),
             };
         }
@@ -2270,15 +2329,32 @@ impl<'a> Vm<'a> {
                 "getMainLooper" => {
                     return Ok(Value::Object(self.alloc_instance("Landroid/os/Looper;")))
                 }
+                "getIntent" => {
+                    let receiver = object_arg(args, 0)?;
+                    let intent = self
+                        .object_field_object(receiver, "intent")
+                        .unwrap_or_else(|| self.alloc_instance("Landroid/content/Intent;"));
+                    if self.object_field_object(intent, "extras").is_none() {
+                        let extras = self.alloc_instance("Landroid/os/Bundle;");
+                        self.set_object_field(intent, "extras", Value::Object(extras));
+                    }
+                    return Ok(Value::Object(intent));
+                }
                 "setContentView" => return Ok(Value::Void),
                 "findViewById" => {
                     let id = int_arg(args, 1)?;
                     let class_name = match id {
+                        2131165186 | 2131165187 | 2131165188 | 2131165189 => {
+                            "Landroid/widget/Button;"
+                        }
+                        2131165185 => "Landroid/widget/LinearLayout;",
                         2131492892 => "Landroid/widget/ViewFlipper;",
                         2131492894 => "Lcom/mobclix/android/sdk/MobclixMMABannerXLAdView;",
                         _ => "Landroid/view/View;",
                     };
-                    return Ok(Value::Object(self.alloc_instance(class_name)));
+                    let view = self.alloc_instance(class_name);
+                    self.set_view_id(view, id);
+                    return Ok(Value::Object(view));
                 }
                 "setRequestedOrientation" | "requestWindowFeature" => return Ok(Value::Int(1)),
                 "getWindow" => {
@@ -2910,18 +2986,24 @@ impl<'a> Vm<'a> {
                 self.view_touch_listeners.insert(view, listener);
                 return Ok(Value::Void);
             }
+            if method_name == "setOnClickListener" {
+                let view = object_arg(args, 0)?;
+                let listener = object_arg(args, 1)?;
+                self.view_click_listeners.insert(view, listener);
+                return Ok(Value::Void);
+            }
+            if method_name == "getId" {
+                let view = object_arg(args, 0)?;
+                return Ok(Value::Int(
+                    self.object_field_int(view, "view_id").unwrap_or(-1),
+                ));
+            }
             return match method_name {
-                "getCurrentView" => {
-                    let view =
-                        self.alloc_instance("Lde/nurogames/android/tinysanta/views/ViewPlus;");
-                    Ok(Value::Object(view))
+                "getWidth" => Ok(Value::Int(self.framework.surface_size.0.max(1))),
+                "getHeight" => Ok(Value::Int(self.framework.surface_size.1.max(1))),
+                "setFocusable" | "invalidate" | "requestFocus" | "setLayoutParams" => {
+                    Ok(Value::Void)
                 }
-                "getChildAt" => {
-                    let view =
-                        self.alloc_instance("Lde/nurogames/android/tinysanta/views/ViewPlus;");
-                    Ok(Value::Object(view))
-                }
-                "setDisplayedChild" | "startAnimation" | "setAnimation" => Ok(Value::Void),
                 _ => Ok(Value::Void),
             };
         }
@@ -3421,6 +3503,42 @@ impl<'a> Vm<'a> {
         }
         if class_name == "Landroid/os/Message;" {
             return Ok(Value::Void);
+        }
+        if class_name == "Landroid/os/Bundle;" {
+            let receiver = object_arg(args, 0)?;
+            return match method_name {
+                "putInt" | "putBoolean" | "putLong" | "putFloat" | "putString" => {
+                    let key = self.string_arg(args, 1).unwrap_or_default();
+                    if let Some(value) = args.get(2).cloned() {
+                        self.set_object_field(receiver, &format!("extra:{key}"), value);
+                    }
+                    Ok(Value::Void)
+                }
+                "getInt" => Ok(Value::Int(
+                    self.object_field_int(
+                        receiver,
+                        &format!("extra:{}", self.string_arg(args, 1).unwrap_or_default()),
+                    )
+                    .or_else(|| int_arg(args, 2).ok())
+                    .unwrap_or(0),
+                )),
+                "getBoolean" => Ok(Value::Int(
+                    self.object_field_int(
+                        receiver,
+                        &format!("extra:{}", self.string_arg(args, 1).unwrap_or_default()),
+                    )
+                    .or_else(|| int_arg(args, 2).ok())
+                    .unwrap_or(0),
+                )),
+                "containsKey" => Ok(Value::Int(i32::from(
+                    self.object_field_int(
+                        receiver,
+                        &format!("extra:{}", self.string_arg(args, 1).unwrap_or_default()),
+                    )
+                    .is_some(),
+                ))),
+                _ => Ok(Value::Void),
+            };
         }
         Err(self.error(
             0,
