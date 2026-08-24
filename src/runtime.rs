@@ -87,6 +87,10 @@ impl RuntimeSession {
     pub fn render_current_frame(&mut self) -> Result<(usize, usize)> {
         self.render_frame(0, 0)
     }
+
+    pub fn drain_register_trace(&mut self) -> Vec<String> {
+        self.vm.drain_trace()
+    }
 }
 
 impl Default for Runtime {
@@ -157,6 +161,7 @@ impl Runtime {
     }
 
     pub fn launch(&mut self, path: impl AsRef<Path>) -> Result<LaunchReport> {
+        let _ = path.as_ref();
         let plan = self.launch_plan(path)?;
         self.game_title = plan
             .application_label
@@ -178,6 +183,21 @@ impl Runtime {
             message: format!("booted launcher; {}", state.graphics),
             compatibility,
         })
+    }
+
+    pub fn trace_registers(&mut self, enabled: bool) -> Vec<String> {
+        if let Some(session) = self.session.as_mut() {
+            session.vm.enable_register_trace(enabled);
+            return session.drain_register_trace();
+        }
+        Vec::new()
+    }
+
+    pub fn drain_trace(&mut self) -> Vec<String> {
+        self.session
+            .as_mut()
+            .map(RuntimeSession::drain_register_trace)
+            .unwrap_or_default()
     }
 
     pub fn parse_dex(&self, bytes: &[u8]) -> Result<DexHeader> {
@@ -257,6 +277,7 @@ impl Runtime {
                 VmConfig {
                     max_steps: self.config.max_steps,
                     max_call_depth: 256,
+                    trace_registers: false,
                 },
             );
             let method_index = plan
@@ -268,12 +289,39 @@ impl Runtime {
                 })
                 .ok_or_else(|| anyhow::anyhow!("launcher onCreate method is missing"))?;
             let activity_object = vm.alloc_instance(plan.class_name.clone());
+            vm.run_instance_method(activity_object, "<init>", Vec::new())
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             let value = vm
                 .run_method(
                     method_index,
                     vec![VmValue::Object(activity_object), VmValue::Null],
                 )
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let mut transition_count = 0usize;
+            while let Some((target_activity, intent)) = vm.take_pending_activity() {
+                if transition_count >= 4 {
+                    break;
+                }
+                transition_count += 1;
+                let target_class = format!("L{};", target_activity.replace('.', "/"));
+                let target_object = vm.alloc_instance(target_class.clone());
+                vm.set_activity_intent(target_object, intent);
+                vm.run_instance_method(target_object, "<init>", Vec::new())
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let target_on_create = plan
+                    .dex
+                    .methods
+                    .iter()
+                    .position(|method| {
+                        method.class_name == target_class && method.name == "onCreate"
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("activity {target_activity} has no onCreate"))?;
+                vm.run_method(
+                    target_on_create,
+                    vec![VmValue::Object(target_object), VmValue::Null],
+                )
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            }
             let listener = vm
                 .framework
                 .gdx_listener
@@ -283,9 +331,18 @@ impl Runtime {
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
                 listener
             } else {
-                vm.find_instance_by_class("Lde/nurogames/android/tinysanta/views/TinySantaView;")
+                vm.find_render_view_or_content_view()
+                    .or_else(|| {
+                        vm.instance_class_names()
+                            .into_iter()
+                            .find(|class_name| class_name.ends_with("/GameView;"))
+                            .and_then(|class_name| vm.find_instance_by_class(&class_name))
+                    })
                     .ok_or_else(|| {
-                        anyhow::anyhow!("application has no ApplicationListener or TinySantaView")
+                        anyhow::anyhow!(
+                            "application launched but created no renderable View; instances: {:?}",
+                            vm.instance_class_names()
+                        )
                     })?
             };
             let mut session = RuntimeSession { vm, listener };
