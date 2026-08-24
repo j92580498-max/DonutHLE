@@ -2131,7 +2131,7 @@ impl<'a> Vm<'a> {
                     }
                     pc += 2;
                 }
-                0x6e | 0x6f | 0x71 | 0x72 => {
+                0x6e | 0x6f | 0x70 | 0x71 | 0x72 => {
                     let method_index = code_word(code, pc + 1, pc, opcode)? as usize;
                     let args = invoke_args(
                         &registers,
@@ -2152,18 +2152,6 @@ impl<'a> Vm<'a> {
                         method_index
                     };
                     pending_result = self.call_method(target, args)?;
-                    pc += 3;
-                }
-                0x70 => {
-                    let method_index = code_word(code, pc + 1, pc, opcode)? as usize;
-                    let args = invoke_args(
-                        &registers,
-                        instruction,
-                        code_word(code, pc + 2, pc, opcode)?,
-                        pc,
-                        opcode,
-                    )?;
-                    pending_result = self.call_method(method_index, args)?;
                     pc += 3;
                 }
                 0x74..=0x78 => {
@@ -2276,6 +2264,12 @@ impl<'a> Vm<'a> {
         if class_name == "Landroid/content/Intent;" {
             let receiver = object_arg(args, 0)?;
             return match method_name {
+                "<init>" => {
+                    if let Some(class_name) = self.class_name_from_value(args.get(2)) {
+                        self.set_object_field(receiver, "component", Value::String(class_name));
+                    }
+                    Ok(Value::Void)
+                }
                 "addFlags" | "setFlags" => {
                     let flags = int_arg(args, 1)?;
                     let value = if method_name == "addFlags" {
@@ -2409,6 +2403,20 @@ impl<'a> Vm<'a> {
                         self.framework
                             .content_views
                             .insert(activity as u32, view as u32);
+                    } else if let Some(layout_id) = args.get(1).and_then(|value| match value {
+                        Value::Int(id) => Some(*id),
+                        _ => None,
+                    }) {
+                        let layout_class = match layout_id {
+                            2130903040 | 2130903042 | 2130903044 => "Landroid/widget/LinearLayout;",
+                            _ => "Landroid/view/View;",
+                        };
+                        let root = self.alloc_instance(layout_class);
+                        self.set_view_id(root, layout_id);
+                        self.framework.ensure_view(root as u32, layout_class);
+                        self.framework
+                            .content_views
+                            .insert(activity as u32, root as u32);
                     }
                     return Ok(Value::Void);
                 }
