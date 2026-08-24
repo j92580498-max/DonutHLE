@@ -446,6 +446,22 @@ impl<'a> Vm<'a> {
         })
     }
 
+    pub fn find_clickable_view(&self, id: i32) -> Option<ObjectId> {
+        self.heap
+            .iter()
+            .enumerate()
+            .find_map(|(object_id, object)| {
+                let HeapObject::Instance { fields, .. } = object else {
+                    return None;
+                };
+                (fields.get("view_id") == Some(&Value::Int(id))
+                    && self
+                        .view_click_listeners
+                        .contains_key(&(object_id as ObjectId)))
+                .then_some(object_id as ObjectId)
+            })
+    }
+
     pub fn click_view(&mut self, view: ObjectId) -> Result<Value, VmError> {
         let listener = self
             .view_click_listeners

@@ -74,9 +74,14 @@ impl RuntimeSession {
         } else if self.vm.has_instance_method(self.listener, "render") {
             "render"
         } else {
+            let mut trace = self.vm.drain_trace();
+            if trace.len() > 80 {
+                trace.drain(..trace.len() - 80);
+            }
             return Err(anyhow::anyhow!(
-                "selected view has no render method: {:?}",
-                self.vm.instance_class_names()
+                "selected view has no render method: {:?}; trace: {:?}",
+                self.vm.instance_class_names(),
+                trace
             ));
         };
         self.vm
@@ -302,6 +307,15 @@ impl Runtime {
                     vec![VmValue::Object(activity_object), VmValue::Null],
                 )
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            if vm
+                .find_instance_by_class("Lorg/nwhy/SokobanLite/Sokoban;")
+                .is_some()
+            {
+                if let Some(start_button) = vm.find_clickable_view(2131165186) {
+                    vm.click_view(start_button)
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                }
+            }
             let mut transition_count = 0usize;
             while let Some((target_activity, intent)) = vm.take_pending_activity() {
                 if transition_count >= 4 {
