@@ -454,7 +454,12 @@ impl<'a> Vm<'a> {
                 let HeapObject::Instance { fields, .. } = object else {
                     return None;
                 };
-                (fields.get("view_id") == Some(&Value::Int(id))
+                ((fields.get("view_id") == Some(&Value::Int(id))
+                    || self
+                        .framework
+                        .views
+                        .get(&(object_id as u32))
+                        .is_some_and(|node| node.id == id))
                     && self
                         .view_click_listeners
                         .contains_key(&(object_id as ObjectId)))
@@ -3110,7 +3115,9 @@ impl<'a> Vm<'a> {
             if method_name == "getId" {
                 let view = object_arg(args, 0)?;
                 return Ok(Value::Int(
-                    self.object_field_int(view, "view_id").unwrap_or(-1),
+                    self.object_field_int(view, "view_id")
+                        .or_else(|| self.framework.views.get(&view).map(|node| node.id))
+                        .unwrap_or(-1),
                 ));
             }
             return match method_name {
