@@ -3261,6 +3261,13 @@ impl<'a> Vm<'a> {
                 _ => Ok(Value::Void),
             };
         }
+        if class_name == "Landroid/media/SoundPool;" {
+            return match method_name {
+                "load" => Ok(Value::Int(1)),
+                "play" | "stop" | "pause" | "resume" | "unload" => Ok(Value::Int(1)),
+                _ => Ok(Value::Void),
+            };
+        }
         if class_name == "Landroid/media/MediaPlayer;" {
             let player = object_arg(args, 0).unwrap_or(0);
             let state = self.framework.media_players.entry(player).or_default();
