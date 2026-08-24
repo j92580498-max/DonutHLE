@@ -278,6 +278,23 @@ impl<'a> Vm<'a> {
             })
             .map(|(index, _)| index)
             .or_else(|| {
+                let mut current = class_name.as_str();
+                let mut visited = std::collections::BTreeSet::new();
+                while visited.insert(current.to_owned()) {
+                    if let Some((index, _)) =
+                        self.dex.methods.iter().enumerate().find(|(index, method)| {
+                            method.class_name == current
+                                && method.name == method_name
+                                && self.dex.method_code_by_index(*index).is_some()
+                        })
+                    {
+                        return Some(index);
+                    }
+                    current = self.dex.find_class(current)?.super_class.as_deref()?;
+                }
+                None
+            })
+            .or_else(|| {
                 self.dex
                     .methods
                     .iter()

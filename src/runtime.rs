@@ -330,7 +330,8 @@ impl Runtime {
             let listener = vm
                 .framework
                 .gdx_listener
-                .or_else(|| vm.find_instance_by_class("Lcom/hyperkani/sliceice/Engine;"));
+                .or_else(|| vm.find_instance_by_class("Lcom/hyperkani/sliceice/Engine;"))
+                .or_else(|| vm.find_instance_by_class("Lorg/nwhy/SokobanLite/GameView;"));
             let listener = if let Some(listener) = listener {
                 vm.run_instance_method(listener, "create", Vec::new())
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -345,8 +346,9 @@ impl Runtime {
                     })
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "application launched but created no renderable View; instances: {:?}",
-                            vm.instance_class_names()
+                            "application launched but created no renderable View; instances: {:?}; trace: {:?}",
+                            vm.instance_class_names(),
+                            vm.drain_trace()
                         )
                     })?
             };
